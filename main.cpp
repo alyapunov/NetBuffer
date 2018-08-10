@@ -301,104 +301,69 @@ struct LevelState
 {
     Link* m_Level;
     size_t m_Pos;
-    size_t m_PosMask; // const
-    size_t m_OverShift; // const
-
-    size_t m_Rise; // const
-    size_t m_Falls; // const
-    size_t m_OverFall;
-
-    size_t m_AllInc; // const
+    size_t m_PosMask;
+    size_t m_AllEndInc;
 };
 
 template <class T>
 struct AllState
 {
-    size_t m_Level;
+    unsigned long long m_Mask;
     LevelState m_Levels[T::HEIGHT];
 
-    AllState() : m_Level(0)
+    AllState() : m_Mask(0)
     {
         static Link tmp[T::L0_SIZE];
-
         m_Levels[0].m_Level = tmp;
-        m_Levels[0].m_Pos = 0;
-        m_Levels[0].m_PosMask = T::L0_SIZE - 1;
-        m_Levels[0].m_OverShift = Log<T::L0_SIZE>::VALUE;
-
-        m_Levels[0].m_Rise = 1;
-        m_Levels[0].m_Falls = 0;
-        m_Levels[0].m_OverFall = 0;
-
-        m_Levels[0].m_AllInc = 0;
-
-        for (size_t i = 1; i < T::HEIGHT - 1; i++)
+        for (size_t i = 0; i < T::HEIGHT; i++)
         {
             m_Levels[i].m_Pos = 0;
             m_Levels[i].m_PosMask = T::CHUNK_SIZE / sizeof(Link) - 1;
-            m_Levels[i].m_OverShift = Log<T::CHUNK_SIZE / sizeof(Link)>::VALUE;
-
-            m_Levels[i].m_Rise = 1;
-            m_Levels[i].m_Falls = 0;
-
-            m_Levels[i].m_AllInc = 0;
+            m_Levels[i].m_AllEndInc = 0;
         }
-
-        const size_t i = T::HEIGHT - 2;
-        m_Levels[i].m_Rise = 0;
-        m_Levels[i].m_Falls = SIZE_MAX;
-        m_Levels[i].m_AllInc = T::CHUNK_SIZE;
-
+        m_Levels[0].m_PosMask = T::L0_SIZE - 1;
+        m_Levels[T::HEIGHT - 2].m_AllEndInc = T::CHUNK_SIZE;
     }
 
     void step(size_t& aAllEnd)
     {
         //Link* m_New = static_cast<Link*>(T::Allocator::alloc());
 
-        LevelState& sLevel = m_Levels[m_Level];
-        LevelState& sNextLevel = m_Levels[m_Level + 1];
+        int i = (sizeof(m_Mask) * CHAR_BIT - 1) ^ __builtin_clzll((m_Mask & ((1 << (T::HEIGHT - 1)) - 1)) | 1);
 
-        aAllEnd += sLevel.m_AllInc;
+        LevelState& sLevel = m_Levels[i];
+        //LevelState& sNextLevel = m_Levels[i + 1];
 
         //sLevel.m_Level[sLevel.m_Pos].next = m_New;
         //sNextLevel.m_Level = m_New;
 
+        aAllEnd += sLevel.m_AllEndInc;
+
         ++sLevel.m_Pos;
-        size_t sOver = sLevel.m_Pos >> sLevel.m_OverShift;
+        unsigned long long sOver = sLevel.m_Pos >> (Log<T::CHUNK_SIZE / sizeof(Link)>::VALUE);
         sLevel.m_Pos &= sLevel.m_PosMask;
-        sNextLevel.m_OverFall = 1 + sOver * sLevel.m_OverFall;
 
-        m_Level += sLevel.m_Rise - ((sOver * sLevel.m_OverFall) & sLevel.m_Falls);
-
+        m_Mask |= 3 << i;
+        m_Mask ^= sOver << i;
     }
-};
-
-struct Test
-{
-    static constexpr size_t L0_SIZE = 8;
-    static constexpr size_t CHUNK_SIZE = 8 * 1024;
-    static constexpr size_t HEIGHT = 3;
-    typedef StupidAllocator<CHUNK_SIZE> Allocator;
 };
 
 int main()
 {
-    #if 1
+    #if 0
     {
         alya::CTimer t;
         t.Start();
-        AllState<Test> st;
+        AllState<NetBufferTraitsBase> st;
         size_t side = 0;
-        const size_t N = 10000000;
+        const size_t N = 100000000;
         size_t s = 0;
         for (size_t i = 0; i < N; i++)
         {
             size_t s_old = s;
-            size_t steps = 0;
-            while (s < s_old + 8 * Test::CHUNK_SIZE)
+            while (s < s_old + 8 * NetBufferTraitsBase::CHUNK_SIZE)
             {
                 st.step(s);
-                steps++;
             }
             side ^= s;
         }
@@ -412,11 +377,11 @@ int main()
     NetBuffer<> n;
     t.Start();
     size_t r = 0;
-    const size_t N = 1000000;
+    const size_t N = 20000000;
     for (size_t i = 2; i < N; i++)
     {
-        r += n.alloc(64 * 1024);
-        n.unalloc(64 * 1024 - 1);
+        r += n.alloc(8 * NetBufferTraitsBase::CHUNK_SIZE);
+        n.unalloc(8 * NetBufferTraitsBase::CHUNK_SIZE - 1);
     }
     t.Stop();
     COUTF(t.Mrps(N), r);
