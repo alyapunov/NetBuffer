@@ -336,7 +336,7 @@ struct AllState
 
     struct LevelState
     {
-        Link* m_Level;
+        Link* m_Level = nullptr;
         size_t m_Pos = 0;
     };
 
@@ -350,7 +350,7 @@ struct AllState
 
     void step(size_t& aAllEnd)
     {
-        //Link* m_New = static_cast<Link*>(T::Allocator::alloc());
+        //Link* sNew = new(T::Allocator::alloc()) Link[T::CHUNK_SIZE / sizeof(Link)];
         Link* sNew = buf();
 
         const unsigned long long sLastMask = 1ull << (T::HEIGHT - 2);
@@ -358,7 +358,7 @@ struct AllState
         {
             aAllEnd += T::CHUNK_SIZE;
             const int i = T::HEIGHT - 2;
-            COUTF(i, m_Levels[i].m_Pos);
+            //COUTF(i, m_Levels[i].m_Pos);
             LevelState& sLevel = m_Levels[i];
             sLevel.m_Level[sLevel.m_Pos].next = sNew;
             ++sLevel.m_Pos;
@@ -376,7 +376,7 @@ struct AllState
         }
 
         int i = BSR<T::HEIGHT - 2>::get(m_Mask);
-        COUTF(i, m_Levels[i].m_Pos);
+        //COUTF(i, m_Levels[i].m_Pos);
 
         LevelState& sLevel = m_Levels[i];
         LevelState& sNextLevel = m_Levels[i + 1];
@@ -414,7 +414,7 @@ struct Test
 
 int main(int, const char**)
 {
-    #if 1
+    #if 0
     {
         AllState<Test> st;
         size_t s = 0;
