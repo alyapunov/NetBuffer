@@ -288,64 +288,114 @@ struct Link
     Link* next;
 };
 
-struct LevelState
+template <size_t MAX_BITS>
+struct BSR
 {
-    Link* m_Level;
-    size_t m_Pos;
-    size_t m_PosMask; // const
+    static int get(unsigned long long aMask)
+    {
+        return (sizeof(aMask) * CHAR_BIT - 1) ^ __builtin_clzll(aMask);
+    }
 };
+
+template <>
+struct BSR<0>
+{
+    static int get(unsigned long long)
+    {
+        return 0;
+    }
+};
+
+template <>
+struct BSR<1>
+{
+    static int get(unsigned long long)
+    {
+        return 0;
+    }
+};
+
+template <>
+struct BSR<2>
+{
+    static int get(unsigned long long aMask)
+    {
+        return aMask >> 1;
+    }
+};
+
 
 template <class T>
 struct AllState
 {
-    unsigned long long m_Mask;
+    static Link* buf()
+    {
+        static Link tmp[T::CHUNK_SIZE / sizeof(Link)];
+        return tmp;
+    }
+
+    struct LevelState
+    {
+        Link* m_Level;
+        size_t m_Pos = 0;
+    };
+
+    unsigned long long m_Mask = 1;
     LevelState m_Levels[T::HEIGHT - 1];
 
-    AllState() : m_Mask(0)
+    AllState()
     {
-        static Link tmp[T::L0_SIZE];
-        m_Levels[0].m_Level = tmp;
-        for (size_t i = 0; i < T::HEIGHT - 1; i++)
-        {
-            m_Levels[i].m_Pos = 0;
-            m_Levels[i].m_PosMask = T::CHUNK_SIZE / sizeof(Link) - 1;
-        }
-        m_Levels[0].m_PosMask = T::L0_SIZE - 1;
+        m_Levels[0].m_Level = buf();
     }
 
     void step(size_t& aAllEnd)
     {
         //Link* m_New = static_cast<Link*>(T::Allocator::alloc());
+        Link* sNew = buf();
 
-        const unsigned long long sLastMask = 1 << (T::HEIGHT - 2);
-        if (m_Mask & sLastMask)
+        const unsigned long long sLastMask = 1ull << (T::HEIGHT - 2);
+        if (__builtin_expect(m_Mask & sLastMask, 1))
         {
             aAllEnd += T::CHUNK_SIZE;
             const int i = T::HEIGHT - 2;
-            //COUTF(i);
+            COUTF(i, m_Levels[i].m_Pos);
             LevelState& sLevel = m_Levels[i];
-            //sLevel.m_Level[sLevel.m_Pos].next = m_New;
+            sLevel.m_Level[sLevel.m_Pos].next = sNew;
             ++sLevel.m_Pos;
-            unsigned long long sOver = sLevel.m_Pos >> (Log<T::CHUNK_SIZE / sizeof(Link)>::VALUE);
-            sLevel.m_Pos &= T::CHUNK_SIZE / sizeof(Link) - 1;
-            m_Mask ^= sOver << i;
+            if (i == 0)
+            {
+                sLevel.m_Pos &= T::L0_SIZE - 1;
+            }
+            else
+            {
+                unsigned long long sOver = sLevel.m_Pos >> (Log<T::CHUNK_SIZE / sizeof(Link)>::VALUE);
+                sLevel.m_Pos &= T::CHUNK_SIZE / sizeof(Link) - 1;
+                m_Mask ^= sOver << i;
+            }
             return;
         }
 
-        int i = (sizeof(m_Mask) * CHAR_BIT - 1) ^ __builtin_clzll((m_Mask & ((1 << (T::HEIGHT - 1)) - 1)) | 1);
-        //COUTF(i);
+        int i = BSR<T::HEIGHT - 2>::get(m_Mask);
+        COUTF(i, m_Levels[i].m_Pos);
 
         LevelState& sLevel = m_Levels[i];
-        //LevelState& sNextLevel = m_Levels[i + 1];
+        LevelState& sNextLevel = m_Levels[i + 1];
 
-        //sLevel.m_Level[sLevel.m_Pos].next = m_New;
-        //sNextLevel.m_Level = m_New;
+        sLevel.m_Level[sLevel.m_Pos].next = sNew;
+        sNextLevel.m_Level = sNew;
 
         ++sLevel.m_Pos;
-        unsigned long long sOver = sLevel.m_Pos >> (Log<T::CHUNK_SIZE / sizeof(Link)>::VALUE);
-        sLevel.m_Pos &= sLevel.m_PosMask;
-
-        m_Mask ^= (2 | sOver) << i;
+        if (__builtin_expect(i == 0, 0))
+        {
+            sLevel.m_Pos &= T::L0_SIZE - 1;
+            m_Mask |= 2;
+        }
+        else
+        {
+            unsigned long long sOver = sLevel.m_Pos >> (Log<T::CHUNK_SIZE / sizeof(Link)>::VALUE);
+            sLevel.m_Pos &= T::CHUNK_SIZE / sizeof(Link) - 1;
+            m_Mask ^= (2 | sOver) << i;
+        }
     }
 };
 
@@ -354,7 +404,7 @@ struct Test
     /* Size (in bytes) of dynamically allocated tree nodes */
     static constexpr size_t CHUNK_SIZE = 16;
     /* Size (count) of top level node of the tree */
-    static constexpr size_t L0_SIZE = 8;
+    static constexpr size_t L0_SIZE = 4;
     /* Height of the tree */
     static constexpr size_t HEIGHT = 6;
     /* Allocator for dynamically allocated tree nodes */
@@ -364,11 +414,11 @@ struct Test
 
 int main(int, const char**)
 {
-    #if 0
+    #if 1
     {
         AllState<Test> st;
         size_t s = 0;
-        for (size_t i = 0; i < 80; i++)
+        for (size_t i = 0; i < 150; i++)
             st.step(s);
         std::cout << std::endl;
         return 0;
@@ -377,20 +427,23 @@ int main(int, const char**)
 
     #if 1
     {
+        using T = NetBufferTraitsBase;
         alya::CTimer t;
         t.Start();
-        AllState<NetBufferTraitsBase> st;
+        AllState<T> st;
         size_t side = 0;
         const size_t N = 100000000;
         size_t s = 0;
         for (size_t i = 0; i < N; i++)
         {
             size_t s_old = s;
-            while (s < s_old + 8 * NetBufferTraitsBase::CHUNK_SIZE)
+            while (s < s_old + 8 * T::CHUNK_SIZE)
             {
                 st.step(s);
             }
             side ^= s;
+            side ^= st.m_Levels[0].m_Pos;
+            side ^= st.m_Levels[1].m_Pos;
         }
         t.Stop();
         COUTF(t.Mrps(N), side);
