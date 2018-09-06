@@ -4,65 +4,7 @@
 
 #include <alya.h>
 #include <climits>
-
-template <size_t SIZE>
-struct StupidAllocator
-{
-    static constexpr size_t ALLOC_SIZE = SIZE;
-    union Block
-    {
-        char data[SIZE];
-        Block* next;
-    };
-
-    Block* m_Next;
-    size_t m_Count;
-
-    StupidAllocator() : m_Next(), m_Count() {}
-
-    void fill()
-    {
-        const size_t COUNT = 16;
-        char *buf = new char[ALLOC_SIZE * COUNT];
-        for (size_t i = 0; i < COUNT; i++)
-        {
-            Block* b = reinterpret_cast<Block*>(&buf[i * SIZE]);
-            b->next = m_Next;
-            m_Next = b;
-        }
-    }
-
-    char* internal_alloc()
-    {
-        if (nullptr == m_Next)
-            fill();
-        char* r = m_Next->data;
-        m_Next = m_Next->next;
-        ++m_Count;
-        return r;
-    }
-
-    void internal_free(char* aPtr)
-    {
-        Block* b = reinterpret_cast<Block*>(aPtr);
-        b->next = m_Next;
-        m_Next = b;
-        --m_Count;
-    }
-
-    static StupidAllocator& instance() { static StupidAllocator inst; return inst; }
-
-    static char* alloc()
-    {
-        return instance().internal_alloc();
-    }
-
-    static void free(char* aPtr)
-    {
-        instance().internal_free(aPtr);
-    }
-
-};
+#include <LocalMemPool.hpp>
 
 template<size_t SIZE> struct Log { static constexpr size_t VALUE = 1 + Log<SIZE / 2>::VALUE; };
 template<> struct Log<1> { static constexpr size_t VALUE = 0; };
@@ -79,7 +21,7 @@ struct NetBufferTraitsBase
     /* Height of the tree */
     static constexpr size_t HEIGHT = 3;
     /* Allocator for dynamically allocated tree nodes */
-    typedef StupidAllocator<CHUNK_SIZE> Allocator;
+    typedef LocalMemPool<CHUNK_SIZE> Allocator;
 };
 
 template<class T = NetBufferTraitsBase>
@@ -408,7 +350,7 @@ struct Test
     /* Height of the tree */
     static constexpr size_t HEIGHT = 6;
     /* Allocator for dynamically allocated tree nodes */
-    typedef StupidAllocator<CHUNK_SIZE> Allocator;
+    typedef LocalMemPool<CHUNK_SIZE> Allocator;
 };
 
 

@@ -1,0 +1,3 @@
+[submodule "MemPool"]
+	path = MemPool
+	url = https://github.com/alyapunov/MemPool
