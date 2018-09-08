@@ -2,15 +2,33 @@
 #include <assert.h>
 #include <vector>
 
-#include <alya.h>
 #include <climits>
 #include <LocalMemPool.hpp>
+#include <unistd.h>
 
 template<size_t SIZE> struct Log { static constexpr size_t VALUE = 1 + Log<SIZE / 2>::VALUE; };
 template<> struct Log<1> { static constexpr size_t VALUE = 0; };
 
 template<size_t BASE, size_t POWER> struct Pow { static constexpr size_t VALUE = BASE * Pow<BASE, POWER-1>::VALUE; };
 template<size_t BASE> struct Pow<BASE, 0> { static constexpr size_t VALUE = 1; };
+
+template <class T>
+struct AllocProxy
+{
+    static char* alloc()
+    {
+        char* sRes = T::alloc();
+        std::cout << "Alloc " << (void*)sRes << std::endl;
+        sleep(1);
+        return sRes;
+    }
+    static void free(char* aPtr)
+    {
+        std::cout << "Free  " << (void*)aPtr << std::endl;
+        sleep(1);
+        T::free(aPtr);
+    }
+};
 
 struct NetBufferTraitsBase
 {
@@ -44,7 +62,6 @@ public:
     static_assert(T::CHUNK_SIZE >= sizeof(Link) * 2, "CHUNK_SIZE must be large enough");
     static_assert(T::L0_SIZE >= 2, "L0_SIZE must be >= 2");
     static_assert(T::HEIGHT >= 2, "HEIGHT must be >= 2");
-    static_assert(T::Allocator::ALLOC_SIZE == T::CHUNK_SIZE, "ALLOC_SIZE must be equal to CHUNK_SIZE");
 
     NetBuffer() : m_Begin(0), m_End(0) {}
 	~NetBuffer();
@@ -151,7 +168,7 @@ size_t NetBuffer<T>::alloc(size_t aSize)
             if (nullptr == sLink->child)
                 throw;
             T::Allocator::free(sLink->data);
-            sAllocatedEnd += T::CHUNK_SIZE;
+            sAllocatedEnd -= T::CHUNK_SIZE;
         }
         // unreachable
         assert(false);
@@ -171,23 +188,20 @@ void NetBuffer<T>::unalloc(size_t aSize)
     size_t sNewAllocatedEnd = (sNewEnd + T::CHUNK_SIZE - 1) & ~(T::CHUNK_SIZE - 1);
     while (sNewAllocatedEnd != sAllocatedEnd)
     {
+        sAllocatedEnd -= T::CHUNK_SIZE;
         size_t sSubtreeCardinality = SUBTREE_CARDINALITY;
-        Link* sLink = &m_Root[(sAllocatedEnd-1) / sSubtreeCardinality % T::L0_SIZE];
-        size_t sNextOffsetVector = (sAllocatedEnd-1) % sSubtreeCardinality;
+        Link* sLink = m_Root[sAllocatedEnd / sSubtreeCardinality % T::L0_SIZE].child;
+        size_t sNextOffsetVector = sAllocatedEnd % sSubtreeCardinality;
         for (size_t h = 0; h < T::HEIGHT - 2; h++)
         {
-            if (0 == sNextOffsetVector)
-            {
-                if (nullptr == sLink->child)
-                    throw;
-                freeMiddle(sLink->child);
-            }
+            Link* sSave = sLink;
             sSubtreeCardinality /= MIDDLE_SIZE;
-            sLink = &sLink->child[sNextOffsetVector / sSubtreeCardinality];
+            sLink = sLink[sNextOffsetVector / sSubtreeCardinality].child;
+            if (0 == sNextOffsetVector)
+                freeMiddle(sSave);
             sNextOffsetVector = sNextOffsetVector % sSubtreeCardinality;
         }
-        T::Allocator::free(sLink->data);
-        sAllocatedEnd -= T::CHUNK_SIZE;
+        freeMiddle(sLink);
     }
     m_End = sNewEnd;
 }
@@ -266,7 +280,6 @@ struct BSR<2>
     }
 };
 
-
 template <class T>
 struct AllState
 {
@@ -344,7 +357,7 @@ struct AllState
 struct Test
 {
     /* Size (in bytes) of dynamically allocated tree nodes */
-    static constexpr size_t CHUNK_SIZE = 16;
+    static constexpr size_t CHUNK_SIZE = 128;
     /* Size (count) of top level node of the tree */
     static constexpr size_t L0_SIZE = 4;
     /* Height of the tree */
@@ -353,59 +366,68 @@ struct Test
     typedef LocalMemPool<CHUNK_SIZE> Allocator;
 };
 
+size_t side_effect = 0;
 
+static void checkpoint(const char* aText, size_t aOpCount)
+{
+    using namespace std::chrono;
+    high_resolution_clock::time_point now = high_resolution_clock::now();
+    static high_resolution_clock::time_point was;
+    duration<double> time_span = duration_cast<duration<double>>(now - was);
+    if (0 != aOpCount)
+    {
+        double Mrps = aOpCount / 1000000. / time_span.count();
+        std::cout << aText << ": " << Mrps << " Mrps" << std::endl;
+    }
+    was = now;
+}
 int main(int, const char**)
 {
-    #if 0
-    {
-        AllState<Test> st;
-        size_t s = 0;
-        for (size_t i = 0; i < 150; i++)
-            st.step(s);
-        std::cout << std::endl;
-        return 0;
-    }
-    #endif
+    checkpoint("", 0);
 
-    #if 1
     {
-        using T = NetBufferTraitsBase;
-        alya::CTimer t;
-        t.Start();
-        AllState<T> st;
-        size_t side = 0;
-        const size_t N = 100000000;
-        size_t s = 0;
-        for (size_t i = 0; i < N; i++)
+        NetBuffer<> n;
+        const size_t N = 20000000;
+        for (size_t i = 2; i < N; i++)
         {
-            size_t s_old = s;
-            while (s < s_old + 8 * T::CHUNK_SIZE)
-            {
-                st.step(s);
-            }
-            side ^= s;
-            side ^= st.m_Levels[0].m_Pos;
-            side ^= st.m_Levels[1].m_Pos;
+            side_effect += n.alloc(8 * NetBufferTraitsBase::CHUNK_SIZE);
+            n.unalloc(8 * NetBufferTraitsBase::CHUNK_SIZE - 1);
         }
-        t.Stop();
-        COUTF(t.Mrps(N), side);
-        return 0;
+        checkpoint("H=3 alloc 8 blocks / free 8 blocks - 1", N);
     }
-    #endif
 
-    alya::CTimer t;
-    NetBuffer<> n;
-    t.Start();
-    size_t r = 0;
-    const size_t N = 20000000;
-    for (size_t i = 2; i < N; i++)
     {
-        r += n.alloc(8 * NetBufferTraitsBase::CHUNK_SIZE);
-        n.unalloc(8 * NetBufferTraitsBase::CHUNK_SIZE - 1);
+        NetBuffer<> n;
+        const size_t N = 20000000;
+        for (size_t i = 2; i < N; i++)
+        {
+            side_effect += n.alloc(8 * Test::CHUNK_SIZE);
+            n.unalloc(8 * Test::CHUNK_SIZE);
+        }
+        checkpoint("H=3 alloc 8 blocks / free 8 blocks", N);
     }
-    t.Stop();
-    COUTF(t.Mrps(N), r);
 
+    {
+        NetBuffer<Test> n;
+        const size_t N = 2000000;
+        for (size_t i = 2; i < N; i++)
+        {
+            side_effect += n.alloc(8 * Test::CHUNK_SIZE);
+            n.unalloc(8 * Test::CHUNK_SIZE - 1);
+        }
+        checkpoint("H=6 alloc 8 blocks / free 8 blocks - 1", N);
+    }
 
-    return 0;
+    {
+        NetBuffer<Test> n;
+        const size_t N = 20000;
+        for (size_t i = 2; i < N; i++)
+        {
+            side_effect += n.alloc(8 * NetBufferTraitsBase::CHUNK_SIZE);
+            n.unalloc(8 * NetBufferTraitsBase::CHUNK_SIZE);
+        }
+        checkpoint("H=6 alloc 8 blocks / free 8 blocks", N);
+    }
+
+    std::cout << "side_effect=" << side_effect << std::endl;
 }
