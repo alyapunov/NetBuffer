@@ -63,7 +63,7 @@ public:
     static_assert(T::L0_SIZE >= 2, "L0_SIZE must be >= 2");
     static_assert(T::HEIGHT >= 2, "HEIGHT must be >= 2");
 
-    NetBuffer() : m_Begin(0), m_End(0) {}
+    NetBuffer() : m_Alloc(T::Allocator::instance()), m_Begin(0), m_End(0) {}
 	~NetBuffer();
 
     size_t begin() const { return m_Begin; }
@@ -83,12 +83,13 @@ public:
 	template <class U> inline void get(size_t aPos, U& t) const;
 
 private:
+    typename T::Allocator& m_Alloc;
     size_t m_Begin;
     size_t m_End;
     Link m_Root[T::L0_SIZE];
 
-    Link* allocMiddle() { return reinterpret_cast<Link*>(T::Allocator::alloc()); }
-    void freeMiddle(Link* aLink) { return T::Allocator::free(reinterpret_cast<char*>(aLink)); }
+    Link* allocMiddle() { return reinterpret_cast<Link*>(m_Alloc.alloc()); }
+    void freeMiddle(Link* aLink) { return m_Alloc.free(reinterpret_cast<char*>(aLink)); }
     static constexpr size_t root_offset(size_t aPos)
     {
         const size_t sShift = Log<T::CHUNK_SIZE>::VALUE + (T::HEIGHT - 2) * Log<MIDDLE_SIZE>::VALUE;
@@ -142,7 +143,7 @@ size_t NetBuffer<T>::alloc(size_t aSize)
                 sNextOffsetVector = sNextOffsetVector % sSubtreeCardinality;
             }
             sLink->data = nullptr;
-            sLink->data = T::Allocator::alloc();
+            sLink->data = m_Alloc.alloc();
             sLink->size = T::CHUNK_SIZE;
             sAllocatedEnd += T::CHUNK_SIZE;
         }
@@ -167,7 +168,7 @@ size_t NetBuffer<T>::alloc(size_t aSize)
             }
             if (nullptr == sLink->child)
                 throw;
-            T::Allocator::free(sLink->data);
+            m_Alloc.free(sLink->data);
             sAllocatedEnd -= T::CHUNK_SIZE;
         }
         // unreachable
@@ -221,7 +222,7 @@ void NetBuffer<T>::free(size_t aPos, size_t aSize)
         size_t sLeft = sPath[T::HEIGHT - 1]->size; // Make interlocked for multithread
         if (0 == sLeft)
         {
-            T::Allocator::free(sPath[T::HEIGHT - 1]->data);
+            m_Alloc.free(sPath[T::HEIGHT - 1]->data);
         }
         /*
         for (size_t h = 0; 0 == sLeft && h < T::HEIGHT - 1; h++)
@@ -230,7 +231,7 @@ void NetBuffer<T>::free(size_t aPos, size_t aSize)
         }
         if (0 == sLink->size)
         {
-            T::Allocator::free(sLink->data);
+            m_Alloc.free(sLink->data);
         }
          */
 
