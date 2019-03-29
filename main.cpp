@@ -409,6 +409,17 @@ int main(int, const char**)
     }
 
     {
+        NetBuffer<> n;
+        const size_t N = 20000000;
+        for (size_t i = 2; i < N; i++)
+        {
+            side_effect += n.alloc(9);
+            n.unalloc(8);
+        }
+        checkpoint("H=3 alloc 9 / free 8", N);
+    }
+
+    {
         NetBuffer<Test> n;
         const size_t N = 2000000;
         for (size_t i = 2; i < N; i++)
@@ -426,6 +437,17 @@ int main(int, const char**)
         {
             side_effect += n.alloc(8 * NetBufferTraitsBase::CHUNK_SIZE);
             n.unalloc(8 * NetBufferTraitsBase::CHUNK_SIZE);
+        }
+        checkpoint("H=6 alloc 8 blocks / free 8 blocks", N);
+    }
+
+    {
+        NetBuffer<Test> n;
+        const size_t N = 20000;
+        for (size_t i = 2; i < N; i++)
+        {
+            side_effect += n.alloc(9);
+            n.unalloc(8);
         }
         checkpoint("H=6 alloc 8 blocks / free 8 blocks", N);
     }
